@@ -9,7 +9,7 @@
 
 /****** 定时器中断参数 ******/
 Ticker ticker1;
-uint16_t interrupt_time = 1000;
+uint16_t interrupt_time = 10;
 uint8_t timer_intert_flag = 0;
 
 /****** 编码器引脚及参数 ******/
@@ -141,18 +141,17 @@ void IRAM_ATTR timerls() {
 }
 
 /****** 编码器计数 ******/
-float wheel_circumference_km = (2 * PI * 0.035) / 10000; // 轮胎半径 ~0.035m => 周长约 0.22m => 0.0002199 km 这是个计算轮胎周长的公式
+float wheel_circumference_km = (2 * PI * 0.035) / 100000; // 轮胎半径 ~0.035m => 周长约 0.22m => 0.0002199 km 这是个计算轮胎周长的公式
 
 float readEncoder() {
   float pulses = (encoder_counter_1 + encoder_counter_2) / 2.0;
-  float speed = pulses / 238.0 / 7.0 * 2 * PI * 3.6;
+  float speed = pulses / 444.5 / 7.0 * 2 * PI * 3.6;
   //Serial.print("encoder_counter_1: "); Serial.println(encoder_counter_1);
   total_pulses += (long)pulses;
   total_distance = total_pulses * wheel_circumference_km;
 
   average_speed = total_distance / ((float)(millis()) / 3600000); // 小时单位
   total_calories = (unsigned long)(average_speed * total_distance * 1.0); // 粗略估算公式
-
   encoder_counter_1 = 0;
   encoder_counter_2 = 0;
 
