@@ -14,28 +14,87 @@ const char index_html[] PROGMEM = R"rawliteral(
 <html>
 <head>
     <meta charset="utf-8">
+    <title>自行车智能码表</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f8f8f8;
+            color: #333;
+            max-width: 400px;
+            margin: 20px auto;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            border-radius: 10px;
+        }
+        
+        h2 {
+            color: #0066cc;
+            text-align: center;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .data-container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        .data-item {
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .data-item:last-child {
+            border-bottom: none;
+        }
+        
+        .label {
+            font-weight: bold;
+            color: #555;
+        }
+        
+        .value {
+            font-size: 1.1em;
+            color: #0066cc;
+        }
+    </style>
 </head>
 <body>
-     <h2>自行车智能码表</h2>
-     <!-- 创建一个ID位Code_table的盒子用于显示获取到的数据 -->
-     <div id="Code_table">
-     </div>
-</body>
+    <h2>🚲 自行车智能码表</h2>
+    
+    <div class="data-container" id="Code_table">
+        <!-- 数据将在这里显示 -->
+    </div>
+
 <script>
-     // 设置一个定时任务, 1000ms执行一次
-     setInterval(function () {
-        var xhttp = new XMLHttpRequest();
-        xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
-                // 此代码会搜索ID为Code_table的组件，然后使用返回内容替换组件内容
-                document.getElementById("Code_table").innerHTML = this.responseText;
-            }
-        };
-        // 使用GET的方式请求 /Code_table
-        xhttp.open("GET", "/Code_table", true);
-        xhttp.send();
-    }, 100)
-</script>)rawliteral";
+function fetchData() {
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      document.getElementById("Code_table").innerHTML = this.responseText;
+    }
+  };
+  xhttp.open("GET", "/Code_table", true);
+  xhttp.send();
+}
+
+// 页面加载时获取一次数据
+document.addEventListener("DOMContentLoaded", function() {
+  fetchData();
+});
+
+// 每隔500毫秒获取最新数据
+setInterval(fetchData, 500);
+</script>
+</body>
+</html>)rawliteral";
 const char *ssid = "Redmi Note 12 Turbo";
 const char *password = "12345678";
 
@@ -139,7 +198,9 @@ void loop() {
     displaySpeed(show_Speed);
     checkSpeedAlarm(show_Speed);
   }
-
+  // 在loop()或适当位置添加阈值限制
+  if (speed_threshold < 1.0) speed_threshold = 1.0;
+  if (speed_threshold > 60.0) speed_threshold = 60.0;
   checkButtonPress();
   delay(1);
 }
@@ -153,16 +214,39 @@ void checkSpeedAlarm(float current_speed) {
 }
 
 void checkButtonPress() {
+  static unsigned long pressStartTime = 0;
+  static boolean isLongPress = false;
+  
   if (digitalRead(BUTTON_SET_SPEED) == LOW) {
-    delay(200);
-    speed_threshold += 1.0;
-    if (speed_threshold > 60.0) speed_threshold = 10.0;
-    Serial.print("New Speed Threshold: ");
-    Serial.println(speed_threshold);
-    delay(500);
+    // 按钮按下
+    if (pressStartTime == 0) {
+      pressStartTime = millis();  // 记录按下开始时间
+    } else if (millis() - pressStartTime >= 1000) { // 长按（1秒）
+      isLongPress = true;
+      speed_threshold -= 0.5;  // 长按减少阈值
+      Serial.print("Long Press - New Speed Threshold: ");
+      Serial.println(speed_threshold);
+      delay(100);  // 防止连续触发
+    }
+  } else {
+    // 按钮释放
+    if (pressStartTime > 0 && !isLongPress) {  // 短按
+      // 计算按压时长
+      unsigned long pressDuration = millis() - pressStartTime;
+      
+      // 如果按压时间小于1秒，则视为短按
+      if (pressDuration < 800) {
+        speed_threshold += 0.5;  // 短按增加阈值
+        Serial.print("Short Press - New Speed Threshold: ");
+        Serial.println(speed_threshold);
+      }
+    }
+    
+    // 重置状态
+    pressStartTime = 0;
+    isLongPress = false;
   }
 }
-
 /****** OLED显示相关 ******/
 void display_move_frame() {
   u8g2.clearBuffer();
@@ -191,6 +275,9 @@ void displaySpeed(float current_speed) {
 
   u8g2.setCursor(0, 64);
   u8g2.printf("Cal: %lu kcal", total_calories);
+  
+  u8g2.setCursor(64, 64);
+  u8g2.printf("thre: %.2f", speed_threshold);
 
   u8g2.sendBuffer();
 }
@@ -206,12 +293,27 @@ float wheel_circumference_km = (2 * PI * 0.035) / 100000; // 轮胎半径 ~0.035
 float readEncoder() {
   float pulses = (encoder_counter_1 + encoder_counter_2) / 2.0;
   float speed = pulses / 444.5 / 7.0 * 2 * PI * 3.6;
-  //Serial.print("encoder_counter_1: "); Serial.println(encoder_counter_1);
+
   total_pulses += (long)pulses;
   total_distance = total_pulses * wheel_circumference_km;
 
-  average_speed = total_distance / ((float)(millis()) / 3600000); // 小时单位
-  total_calories = (unsigned long)(average_speed * total_distance * 1.0); // 粗略估算公式
+  float time_hours = (float)(millis()) / 3600000; // 小时单位
+  average_speed = total_distance / time_hours;
+
+  // 假设体重为70kg
+  float weight_kg = 70.0;
+  float MET;
+
+  if (average_speed < 5) {  // 慢速骑行16
+    MET = 3.5;
+  } else if (average_speed < 7) {   // 中速骑行 19
+    MET = 6.0;
+  } else {    // 快速骑行
+    MET = 8.0;
+  }
+
+  //total_calories = (unsigned long)(MET * weight_kg * time_hours);
+  total_calories = (unsigned long)(average_speed * total_distance * 10.0); // 粗略估算公式
   encoder_counter_1 = 0;
   encoder_counter_2 = 0;
 
@@ -243,6 +345,8 @@ String Speed_Data(void){
   dataBuffer += "<b>消耗的卡路里:</b>";
   dataBuffer += String(total_calories);
   dataBuffer += " kcal<br>";
+  dataBuffer += "<b>当前速度阈值:</b>";
+  dataBuffer += String(speed_threshold);
 
   return dataBuffer;
 }
