@@ -1,7 +1,43 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include "Ticker.h"
+
+/****** WIFI和Web设置 ******/
+AsyncWebServer server(80);
+// 使用端口号80可以直接输入IP访问，使用其它端口需要输入IP:端口号访问
+// 一个储存网页的数组
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML>
+<html>
+<head>
+    <meta charset="utf-8">
+</head>
+<body>
+     <h2>自行车智能码表</h2>
+     <!-- 创建一个ID位Code_table的盒子用于显示获取到的数据 -->
+     <div id="Code_table">
+     </div>
+</body>
+<script>
+     // 设置一个定时任务, 1000ms执行一次
+     setInterval(function () {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200) {
+                // 此代码会搜索ID为Code_table的组件，然后使用返回内容替换组件内容
+                document.getElementById("Code_table").innerHTML = this.responseText;
+            }
+        };
+        // 使用GET的方式请求 /Code_table
+        xhttp.open("GET", "/Code_table", true);
+        xhttp.send();
+    }, 100)
+</script>)rawliteral";
+const char *ssid = "Redmi Note 12 Turbo";
+const char *password = "12345678";
 
 /****** I2C引脚定义 ******/
 #define BOARD_I2C_SCL   9
@@ -38,19 +74,43 @@ void display_move_frame();
 void displayWelcome();
 void displaySpeed(float speed);
 
+String Speed_Data(void);
+
 // 初始化OLED
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ BOARD_I2C_SCL, /* data=*/ BOARD_I2C_SDA, /* reset=*/ U8X8_PIN_NONE);
 
 // 累积数据
-unsigned long total_pulses = 0;
-float total_distance = 0.0;
-float average_speed = 0.0;
-unsigned long total_calories = 0;
-unsigned long trip_count = 0;
+unsigned long total_pulses = 0;   // 累计脉冲数
+float show_Speed = 0.0;                // 当前速度
+float total_distance = 0.0;       // 累计距离
+float average_speed = 0.0;        // 平均速度
+unsigned long total_calories = 0; // 累计卡路里
+unsigned long trip_count = 0;     // 累计行程
 
 void setup() {
   Serial.begin(115200);
   Serial.println("Init u8g2 ....");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid,password);
+  if(WiFi.status() != WL_CONNECTED) {
+    Serial.println("Connecting to WiFi...");
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
+    }
+  }
+  Serial.println("Connected to WiFi");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "text/html", index_html);
+  });
+  server.on("/Code_table", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send_P(200, "text/plain", Speed_Data().c_str());
+  });
+  server.begin();
 
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
   u8g2.begin();
@@ -75,9 +135,9 @@ void setup() {
 void loop() {
   if (timer_intert_flag == 1) {
     timer_intert_flag = 0;
-    float speed = readEncoder();
-    displaySpeed(speed);
-    checkSpeedAlarm(speed);
+    show_Speed = readEncoder();
+    displaySpeed(show_Speed);
+    checkSpeedAlarm(show_Speed);
   }
 
   checkButtonPress();
@@ -164,4 +224,25 @@ void counter_encoder_1() {
 
 void counter_encoder_2() {
   encoder_counter_2++;
+}
+
+/******* 打包上传网页的数据 ******/
+String Speed_Data(void){
+  // 将全部码表数据打包成JSON格式
+  String dataBuffer = "<p>";
+  dataBuffer += "<h1>码表数据</h1>";
+  dataBuffer += "<b>当前速度:</b>";
+  dataBuffer += String(show_Speed);
+  dataBuffer += " km/h<br>";
+  dataBuffer += "<b>平均速度:</b>";
+  dataBuffer += String(average_speed);
+  dataBuffer += " km/h<br>";
+  dataBuffer += "<b>总里程:</b>";
+  dataBuffer += String(total_distance);
+  dataBuffer += " km<br>";
+  dataBuffer += "<b>消耗的卡路里:</b>";
+  dataBuffer += String(total_calories);
+  dataBuffer += " kcal<br>";
+
+  return dataBuffer;
 }
