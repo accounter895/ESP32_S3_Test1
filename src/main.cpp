@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <PubSubClient.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include "Ticker.h"
@@ -95,8 +96,24 @@ setInterval(fetchData, 500);
 </script>
 </body>
 </html>)rawliteral";
+// WiFi信息
 const char *ssid = "Redmi Note 12 Turbo";
 const char *password = "12345678";
+
+// 百度Iot Core配置
+const char* endpoint = "aadmljg.iot.gz.baidubce.com";
+const int port = 1883; // 或8883（SSL）
+const char* clientId = "Esp32_S3";
+const char* mqttUser = "thingidp@aadmljg|Esp32_S3|0|MD5";
+const char* mqttPassword = "55161571ad6e28e22ca93d70072ffc82";
+
+// 自定义主题(发布和订阅)
+const char* pubTopic = "$iot/Esp32_S3/events";
+const char* subTopic = "$iot/Esp32_S3/msg";
+const char* Topic = "#";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 /****** I2C引脚定义 ******/
 #define BOARD_I2C_SCL   9
@@ -115,10 +132,10 @@ float speed_threshold = 5.0;
 volatile long encoder_counter_1 = 0, encoder_counter_2 = 0;
 
 /****** 蜂鸣器引脚 ******/
-#define BUZZER_PIN 21
+#define BUZZER_PIN 19
 
 /****** 按键引脚 ******/
-#define BUTTON_SET_SPEED 4
+#define BUTTON_SET_SPEED 11
 
 /****** 函数声明 ******/
 void timerls();
@@ -134,6 +151,10 @@ void displayWelcome();
 void displaySpeed(float speed);
 
 String Speed_Data(void);
+
+// mqtt
+void reconnect_MQTT();
+void callback(char* topic, byte* payload, unsigned int length);
 
 // 初始化OLED
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ BOARD_I2C_SCL, /* data=*/ BOARD_I2C_SDA, /* reset=*/ U8X8_PIN_NONE);
@@ -162,6 +183,9 @@ void setup() {
   Serial.println("Connected to WiFi");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+
+  client.setServer(endpoint, port);
+  client.setCallback(callback);
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send_P(200, "text/html", index_html);
@@ -192,6 +216,21 @@ void setup() {
 }
 
 void loop() {
+  if (!client.connected()) {
+    reconnect_MQTT();
+  }
+  client.loop();
+
+  // 每隔2秒发布消息
+  static unsigned long lastMsg = 0;
+  if (millis() - lastMsg > 2000) {
+    lastMsg = millis();
+    char payload[100];
+    snprintf(payload, sizeof(payload),"{\"total_distance\":%.2f, \"average_speed\":%.2f \"total_calories\":%d}",+
+    total_distance, average_speed, total_calories);
+    client.publish(pubTopic, payload);
+  }
+
   if (timer_intert_flag == 1) {
     timer_intert_flag = 0;
     show_Speed = readEncoder();
@@ -221,7 +260,7 @@ void checkButtonPress() {
     // 按钮按下
     if (pressStartTime == 0) {
       pressStartTime = millis();  // 记录按下开始时间
-    } else if (millis() - pressStartTime >= 1000) { // 长按（1秒）
+    } else if (millis() - pressStartTime >= 2000) { // 长按（1秒）
       isLongPress = true;
       speed_threshold -= 0.5;  // 长按减少阈值
       Serial.print("Long Press - New Speed Threshold: ");
@@ -235,10 +274,11 @@ void checkButtonPress() {
       unsigned long pressDuration = millis() - pressStartTime;
       
       // 如果按压时间小于1秒，则视为短按
-      if (pressDuration < 800) {
+      if (pressDuration < 1000) {
         speed_threshold += 0.5;  // 短按增加阈值
         Serial.print("Short Press - New Speed Threshold: ");
         Serial.println(speed_threshold);
+        delay(100);
       }
     }
     
@@ -247,6 +287,7 @@ void checkButtonPress() {
     isLongPress = false;
   }
 }
+
 /****** OLED显示相关 ******/
 void display_move_frame() {
   u8g2.clearBuffer();
@@ -313,7 +354,7 @@ float readEncoder() {
   }
 
   //total_calories = (unsigned long)(MET * weight_kg * time_hours);
-  total_calories = (unsigned long)(average_speed * total_distance * 10.0); // 粗略估算公式
+  total_calories = (unsigned long)(average_speed * total_distance * 50.0); // 粗略估算公式
   encoder_counter_1 = 0;
   encoder_counter_2 = 0;
 
@@ -349,4 +390,31 @@ String Speed_Data(void){
   dataBuffer += String(speed_threshold);
 
   return dataBuffer;
+}
+
+/******* MQTT连接 ******/
+void reconnect_MQTT(){
+  while (!client.connected()) {
+    if (client.connect(clientId, mqttUser, mqttPassword)) {
+      Serial.println("MQTT Connected");
+      // 订阅主题
+      client.subscribe(Topic);
+    } else {
+      Serial.print("MQTT Connect Failed, rc=");
+      Serial.print(client.state());
+      delay(5000);
+    }
+  }
+}
+
+/******* MQTT回调函数 ******/
+void callback(char* topic, byte* payload, unsigned int length) {
+  // 处理接收到的消息
+  Serial.print("Message Arrived [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
 }
