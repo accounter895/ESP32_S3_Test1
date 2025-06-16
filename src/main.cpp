@@ -132,7 +132,7 @@ float speed_threshold = 5.0;
 volatile long encoder_counter_1 = 0, encoder_counter_2 = 0;
 
 /****** 蜂鸣器引脚 ******/
-#define BUZZER_PIN 19
+#define BUZZER_PIN 21
 
 /****** 按键引脚 ******/
 #define BUTTON_SET_SPEED 11
@@ -246,9 +246,9 @@ void loop() {
 
 void checkSpeedAlarm(float current_speed) {
   if (current_speed > speed_threshold) {
-    digitalWrite(BUZZER_PIN, HIGH);
-  } else {
     digitalWrite(BUZZER_PIN, LOW);
+  } else {
+    digitalWrite(BUZZER_PIN, HIGH);
   }
 }
 
